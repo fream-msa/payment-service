@@ -1,0 +1,107 @@
+# ========================================
+# Payment Service - 애플리케이션 설정
+# 결제 처리 마이크로서비스
+# ========================================
+
+spring:
+  # ===== 애플리케이션 기본 정보 =====
+  application:
+    name: payment-service  # 서비스명 (Eureka 등록, Kafka 토픽, 로깅에 사용)
+  
+  # ===== 프로파일 설정 =====
+  # 환경별 설정 분리 (local, dev, staging, prod)
+  profiles:
+    active: ${APP_PROFILE:local}  # 기본값: local
+  
+  # ===== Config Server 연결 설정 =====
+  # 중앙 집중식 설정 관리를 위한 Config Server 연동
+  config:
+    import: 'optional:configserver:'  # Config Server에서 설정 import (optional: 없어도 실행 가능)
+  
+  cloud:
+    config:
+      # ----- Config Server Discovery 설정 -----
+      discovery:
+        enabled: true  # Eureka를 통한 Config Server 자동 탐색
+        service-id: config-server  # Config Server의 Eureka 서비스 ID
+      
+      # ----- Config Server 연결 실패 처리 -----
+      fail-fast: false  # Config Server 연결 실패 시에도 애플리케이션 시작 (개발 환경용)
+      
+      # ----- Config Server 재시도 설정 -----
+      retry:
+        initial-interval: 1000  # 초기 재시도 대기 시간 (1초)
+        max-attempts: 3  # 최대 재시도 횟수
+        max-interval: 2000  # 최대 재시도 대기 시간 (2초)
+        multiplier: 1.1  # 재시도 간격 증가율 (1초 → 1.1초 → 1.21초)
+
+  # ===== R2DBC 데이터베이스 설정 =====
+  # Reactive Relational Database Connectivity (비동기 DB 접근)
+  r2dbc:
+    # R2DBC URL 형식: r2dbc:postgresql://호스트:포트/데이터베이스명
+    # Payment Service 전용 DB (payment_db) - 결제 트랜잭션 데이터 저장
+    url: r2dbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:payment_db}
+    username: ${DB_USERNAME:postgres}  # DB 사용자명 (기본값: postgres)
+    password: ${DB_PASSWORD:_aA123456}  # DB 비밀번호
+    # 참고: Connection Pool 설정은 Config Server의 공통 설정에서 관리
+
+# ===== 서버 설정 =====
+server:
+  port: ${SERVER_PORT:8094}  # 서비스 포트 (환경변수로 오버라이드 가능, 기본값: 8094)
+  shutdown: graceful  # 우아한 종료 (진행중인 요청 완료 후 종료)
+  # graceful shutdown timeout은 기본 30초 (spring.lifecycle.timeout-per-shutdown-phase로 조정 가능)
+  # 결제 처리 중 종료되면 안되므로 graceful shutdown 필수
+
+# ===== Eureka Client 설정 =====
+# 서비스 디스커버리 및 등록을 위한 설정
+eureka:
+  # ----- 인스턴스 설정 -----
+  instance:
+    prefer-ip-address: false  # IP 주소 대신 hostname 사용 (Docker 환경에서 중요)
+    hostname: ${EUREKA_INSTANCE_HOSTNAME:payment-service}  # Eureka에 등록할 호스트명
+    instance-id: ${eureka.instance.hostname}:${server.port}  # 고유 인스턴스 ID (예: payment-service:8094)
+    
+    # ----- 헬스체크 설정 -----
+    lease-renewal-interval-in-seconds: 10  # Eureka 서버로 하트비트 전송 간격 (10초)
+    lease-expiration-duration-in-seconds: 30  # 하트비트 만료 시간 (30초, 이 시간동안 하트비트 없으면 등록 해제)
+    
+    # ----- 메타데이터 설정 -----
+    # Eureka 대시보드 및 서비스 간 통신에서 사용할 추가 정보
+    metadata-map:
+      zone: ${ENVIRONMENT:local}  # 배포 환경 (local, dev, staging, prod)
+      version: ${version:0.0.1-SNAPSHOT}  # 서비스 버전
+  
+  # ----- 클라이언트 설정 -----
+  client:
+    register-with-eureka: true  # Eureka 서버에 이 서비스 등록
+    fetch-registry: true  # 다른 서비스 정보를 Eureka에서 가져오기
+    
+    # ----- Eureka 서버 URL 설정 -----
+    # 고가용성(HA)을 위해 2개의 Eureka 서버 지정
+    service-url:
+      defaultZone: ${EUREKA_DEFAULT_ZONE:http://eureka-server-1:3150/eureka/,http://eureka-server-2:3151/eureka/}
+    
+    # ----- 레지스트리 갱신 설정 -----
+    registry-fetch-interval-seconds: 5  # Eureka 레지스트리 정보 갱신 주기 (5초)
+    # 짧은 주기로 설정하여 서비스 변경사항을 빠르게 감지
+
+# ===== Swagger/OpenAPI 설정 =====
+# API 문서 자동 생성 및 테스트 UI 제공
+springdoc:
+  # ----- Swagger UI 설정 -----
+  swagger-ui:
+    path: /swagger-ui.html  # Swagger UI 접근 경로 (http://localhost:8094/swagger-ui.html)
+    # 추가 설정은 Config Server의 공통 설정에서 관리
+  
+  # ----- OpenAPI 문서 설정 -----
+  api-docs:
+    path: /v3/api-docs  # OpenAPI 3.0 스펙 JSON 경로 (http://localhost:8094/v3/api-docs)
+
+# ===== 로깅 설정 =====
+# 서비스별 로깅 레벨 커스터마이징
+logging:
+  level:
+    com.fream.payment: DEBUG  # Payment Service 패키지의 로그 레벨 (DEBUG: 상세 로그)
+    # 다른 패키지는 Config Server의 공통 설정 따름
+    # 운영 환경에서는 INFO 또는 WARN으로 변경 권장
+    # 결제 처리 로직은 상세 로그 필수 (트랜잭션 추적)
